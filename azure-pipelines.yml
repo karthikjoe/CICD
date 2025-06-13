@@ -6,51 +6,65 @@ trigger:
       - main
 
 pool:
-  name: Default  # Name of your self-hosted agent pool in Azure DevOps
+  name: CICDTest  # Your self-hosted agent pool
+
+variables:
+  appPoolName: 'website'
+  publishFolder: 'D:\website-master_temp'
+  deployFolder: 'D:\website-master'
 
 steps:
 - task: PowerShell@2
   displayName: 'Stop AppPool'
   inputs:
     targetType: 'inline'
-    script: '%SYSTEMROOT%\System32\inetsrv\appcmd stop apppool /apppool.name:"website"'
+    script: |
+      Write-Host "Stopping AppPool: $(appPoolName)"
+      %SYSTEMROOT%\System32\inetsrv\appcmd stop apppool /apppool.name:"$(appPoolName)"
 
-- task: PowerShell@2
-  displayName: 'Checkout code'
-  inputs:
-    targetType: 'inline'
-    script: 'echo Checkout is handled automatically in Azure Pipelines'
+- checkout: self
 
-# Skip setup-dotnet if SDK is installed on VM
+# Skip this if .NET 8 is installed on your VM already
+# - task: UseDotNet@2
+#   inputs:
+#     packageType: 'sdk'
+#     version: '8.0.x'
 
 - task: PowerShell@2
   displayName: 'Restore dependencies'
   inputs:
     targetType: 'inline'
-    script: 'dotnet restore'
+    script: |
+      dotnet restore
 
 - task: PowerShell@2
   displayName: 'Build'
   inputs:
     targetType: 'inline'
-    script: 'dotnet build --configuration Release --no-restore'
+    script: |
+      dotnet build --configuration Release --no-restore
 
 - task: PowerShell@2
   displayName: 'Publish'
   inputs:
     targetType: 'inline'
-    script: 'dotnet publish --configuration Release --output D:\website-master_temp\'
+    script: |
+      dotnet publish --configuration Release --output "$(publishFolder)"
 
 - task: PowerShell@2
   displayName: 'Deploy to IIS folder'
   inputs:
     targetType: 'inline'
     script: |
-      Remove-Item -Recurse -Force D:\website-master\*
-      Copy-Item -Path D:\website-master_temp\* -Destination D:\website-master\ -Recurse
+      Write-Host "Cleaning deploy folder: $(deployFolder)"
+      Remove-Item -Recurse -Force "$(deployFolder)\*" -ErrorAction SilentlyContinue
+      Write-Host "Copying files to deploy folder"
+      Copy-Item -Path "$(publishFolder)\*" -Destination "$(deployFolder)" -Recurse
 
 - task: PowerShell@2
   displayName: 'Start AppPool'
   inputs:
     targetType: 'inline'
-    script: '%SYSTEMROOT%\System32\inetsrv\appcmd start apppool /apppool.name:"website"'
+    script: |
+      Write-Host "Starting AppPool: $(appPoolName)"
+      %SYSTEMROOT%\System32\inetsrv\appcmd start apppool /apppool.name:"$(appPoolName)"
