@@ -1,51 +1,50 @@
 trigger:
-- main  # or your deployment branch
+- Main
 
 pool:
-  name: 'CICDTest'  # Replace with your agent pool name
+  name: 'CICDTest'   # 🔑 Your self-hosted agent pool name
 
 variables:
-  solution: '**/*.sln'
-  buildPlatform: 'Release'
   buildConfiguration: 'Release'
-  publishFolder: '$(Build.ArtifactStagingDirectory)\website-publish'
-  iisFolder: 'D:\website-master'
-  appPoolName: 'website'
+  publishFolder: '$(Build.ArtifactStagingDirectory)\CICDTest-publish'
+  iisFolder: 'D:\CICDTest'
+  appPoolName: 'CICDTestAppPool'
   backupRoot: 'D:\website-backup'
 
 stages:
 - stage: Build
-  displayName: 'Build and Publish'
+  displayName: 'Build CICDTest'
   jobs:
   - job: BuildJob
     steps:
     - task: UseDotNet@2
       inputs:
         packageType: 'sdk'
-        version: '8.x'
-    
-    - task: VSBuild@1
-      inputs:
-        solution: '$(solution)'
-        msbuildArgs: '/p:DeployOnBuild=true /p:PublishProfile=FolderProfile /p:Configuration=$(buildConfiguration)'
-        platform: '$(buildPlatform)'
-        configuration: '$(buildConfiguration)'
+        version: '8.x'   # 🔑 Adjust to installed SDK version on your standalone agent
+        installationPath: 'C:\dotnet'  # Optional if you have .NET already in PATH
 
     - task: DotNetCoreCLI@2
-      displayName: 'Publish app'
+      displayName: 'dotnet build'
+      inputs:
+        command: 'build'
+        projects: '**/*.csproj'
+        arguments: '--configuration $(buildConfiguration)'
+
+    - task: DotNetCoreCLI@2
+      displayName: 'dotnet publish'
       inputs:
         command: 'publish'
         publishWebProjects: true
         arguments: '--configuration $(buildConfiguration) --output $(publishFolder)'
 
 - stage: Deploy
-  displayName: 'Deploy to IIS'
+  displayName: 'Deploy CICDTest to IIS'
   dependsOn: Build
   jobs:
   - job: DeployJob
     steps:
     - task: PowerShell@2
-      displayName: 'Deploy with backup, rollback, cleanup'
+      displayName: 'Backup, Deploy, Rollback, Cleanup'
       inputs:
         targetType: 'inline'
         script: |
@@ -82,7 +81,9 @@ stages:
               Remove-Item -Path "$publishFolder" -Recurse -Force -ErrorAction SilentlyContinue
 
               Write-Host "Cleaning old backups (older than 7 days)..."
-              Get-ChildItem "$(backupRoot)" | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-7) } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+              Get-ChildItem "$(backupRoot)" -Directory | ForEach-Object {
+                  Get-ChildItem $_.FullName -Directory | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-7) } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+              }
           }
           catch {
               Write-Error "Deployment failed: $_"
@@ -93,7 +94,6 @@ stages:
                   Start-WebAppPool -Name $appPoolName
                   Write-Host "Rollback completed."
               } else {
-                  Write-Warning "No backup found for rollback."
+                  Write-Error "Rollback failed: no backup found."
               }
-              throw
           }
