@@ -20,7 +20,7 @@ steps:
     targetType: 'inline'
     script: |
       Write-Host "Stopping AppPool: $(appPoolName)"
-      %SYSTEMROOT%\System32\inetsrv\appcmd stop apppool /apppool.name:"$(appPoolName)"
+      C:\Windows\System32\inetsrv\appcmd.exe stop apppool /apppool.name:"$(appPoolName)"
 
 - checkout: self
 
@@ -67,4 +67,4 @@ steps:
     targetType: 'inline'
     script: |
       Write-Host "Starting AppPool: $(appPoolName)"
-      %SYSTEMROOT%\System32\inetsrv\appcmd start apppool /apppool.name:"$(appPoolName)"
+      C:\Windows\System32\inetsrv\appcmd.exe start apppool /apppool.name:"$(appPoolName)"
