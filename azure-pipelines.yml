@@ -1,70 +1,99 @@
-name: Build and Deploy .NET 8 App to Azure VM
-
 trigger:
-  branches:
-    include:
-      - main
+- main  # or your deployment branch
 
 pool:
-  name: CICDTest  # Your self-hosted agent pool
+  name: 'CICDTest'  # Replace with your agent pool name
 
 variables:
+  solution: '**/*.sln'
+  buildPlatform: 'Release'
+  buildConfiguration: 'Release'
+  publishFolder: '$(Build.ArtifactStagingDirectory)\website-publish'
+  iisFolder: 'D:\website-master'
   appPoolName: 'website'
-  publishFolder: 'D:\website-master_temp'
-  deployFolder: 'D:\website-master'
+  backupRoot: 'D:\website-backup'
 
-steps:
-- task: PowerShell@2
-  displayName: 'Stop AppPool'
-  inputs:
-    targetType: 'inline'
-    script: |
-      Write-Host "Stopping AppPool: $(appPoolName)"
-      C:\Windows\System32\inetsrv\appcmd.exe stop apppool /apppool.name:"$(appPoolName)"
+stages:
+- stage: Build
+  displayName: 'Build and Publish'
+  jobs:
+  - job: BuildJob
+    steps:
+    - task: UseDotNet@2
+      inputs:
+        packageType: 'sdk'
+        version: '8.x'
+    
+    - task: VSBuild@1
+      inputs:
+        solution: '$(solution)'
+        msbuildArgs: '/p:DeployOnBuild=true /p:PublishProfile=FolderProfile /p:Configuration=$(buildConfiguration)'
+        platform: '$(buildPlatform)'
+        configuration: '$(buildConfiguration)'
 
-- checkout: self
+    - task: DotNetCoreCLI@2
+      displayName: 'Publish app'
+      inputs:
+        command: 'publish'
+        publishWebProjects: true
+        arguments: '--configuration $(buildConfiguration) --output $(publishFolder)'
 
-# Skip this if .NET 8 is installed on your VM already
-# - task: UseDotNet@2
-#   inputs:
-#     packageType: 'sdk'
-#     version: '8.0.x'
+- stage: Deploy
+  displayName: 'Deploy to IIS'
+  dependsOn: Build
+  jobs:
+  - job: DeployJob
+    steps:
+    - task: PowerShell@2
+      displayName: 'Deploy with backup, rollback, cleanup'
+      inputs:
+        targetType: 'inline'
+        script: |
+          $dateFolder = (Get-Date -Format 'yyyyMMdd')
+          $timeFolder = (Get-Date -Format 'HHmmss')
+          $backupPath = Join-Path "$(backupRoot)\$dateFolder" $timeFolder
+          $iisFolder = "$(iisFolder)"
+          $publishFolder = "$(publishFolder)"
+          $appPoolName = "$(appPoolName)"
 
-- task: PowerShell@2
-  displayName: 'Restore dependencies'
-  inputs:
-    targetType: 'inline'
-    script: |
-      dotnet restore
+          if (-not (Test-Path $backupPath)) {
+              New-Item -ItemType Directory -Path $backupPath -Force | Out-Null
+          }
 
-- task: PowerShell@2
-  displayName: 'Build'
-  inputs:
-    targetType: 'inline'
-    script: |
-      dotnet build --configuration Release --no-restore
+          try {
+              Write-Host "Stopping app pool: $appPoolName"
+              Stop-WebAppPool -Name $appPoolName
 
-- task: PowerShell@2
-  displayName: 'Publish'
-  inputs:
-    targetType: 'inline'
-    script: |
-      dotnet publish --configuration Release --output "$(publishFolder)"
+              if (Test-Path $iisFolder) {
+                  Write-Host "Backing up current site to: $backupPath"
+                  Copy-Item $iisFolder $backupPath -Recurse -Force
+              }
 
-- task: PowerShell@2
-  displayName: 'Deploy to IIS folder'
-  inputs:
-    targetType: 'inline'
-    script: |
-      Write-Host "Cleaning deploy folder: $(deployFolder)"
-      Remove-Item -Recurse -Force "$(deployFolder)\*" -ErrorAction SilentlyContinue
-      Write-Host "Copying files to deploy folder"
-      Copy-Item -Path "$(publishFolder)\*" -Destination "$(deployFolder)" -Recurse
+              Write-Host "Clearing IIS folder: $iisFolder"
+              Remove-Item -Path "$iisFolder\*" -Recurse -Force -ErrorAction SilentlyContinue
 
-- task: PowerShell@2
-  displayName: 'Start AppPool'
-  inputs:
-    targetType: 'inline'
-    script: |
-      Write-Host "Starting AppPool: $(appPoolName)"
-      C:\Windows\System32\inetsrv\appcmd.exe start apppool /apppool.name:"$(appPoolName)"
+              Write-Host "Copying new publish files..."
+              Copy-Item "$publishFolder\*" $iisFolder -Recurse -Force
+
+              Write-Host "Starting app pool: $appPoolName"
+              Start-WebAppPool -Name $appPoolName
+
+              Write-Host "Cleaning up publish folder..."
+              Remove-Item -Path "$publishFolder" -Recurse -Force -ErrorAction SilentlyContinue
+
+              Write-Host "Cleaning old backups (older than 7 days)..."
+              Get-ChildItem "$(backupRoot)" | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-7) } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          catch {
+              Write-Error "Deployment failed: $_"
+              if (Test-Path $backupPath) {
+                  Write-Host "Rolling back from: $backupPath"
+                  Remove-Item -Path "$iisFolder\*" -Recurse -Force -ErrorAction SilentlyContinue
+                  Copy-Item "$backupPath\*" $iisFolder -Recurse -Force
+                  Start-WebAppPool -Name $appPoolName
+                  Write-Host "Rollback completed."
+              } else {
+                  Write-Warning "No backup found for rollback."
+              }
+              throw
+          }
