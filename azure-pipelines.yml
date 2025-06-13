@@ -1,39 +1,56 @@
 name: Build and Deploy .NET 8 App to Azure VM
 
-on:
-  push:
-    branches:
+trigger:
+  branches:
+    include:
       - main
 
-jobs:
-  build-deploy:
-    runs-on: self-hosted  # Runs on your Azure VM agent
-    steps:
-    - name: Stop AppPool
-      run: %SYSTEMROOT%\System32\inetsrv\appcmd stop apppool /apppool.name:"website"
+pool:
+  name: Default  # Name of your self-hosted agent pool in Azure DevOps
 
-    - name: Checkout code
-      uses: actions/checkout@v4
+steps:
+- task: PowerShell@2
+  displayName: 'Stop AppPool'
+  inputs:
+    targetType: 'inline'
+    script: '%SYSTEMROOT%\System32\inetsrv\appcmd stop apppool /apppool.name:"website"'
 
-    # Omit this if SDK is pre-installed on the VM
-    # - name: Setup .NET 8
-    #   uses: actions/setup-dotnet@v4
-    #   with:
-    #     dotnet-version: '8.0.x'
+- task: PowerShell@2
+  displayName: 'Checkout code'
+  inputs:
+    targetType: 'inline'
+    script: 'echo Checkout is handled automatically in Azure Pipelines'
 
-    - name: Restore dependencies
-      run: dotnet restore
+# Skip setup-dotnet if SDK is installed on VM
 
-    - name: Build
-      run: dotnet build --configuration Release --no-restore
+- task: PowerShell@2
+  displayName: 'Restore dependencies'
+  inputs:
+    targetType: 'inline'
+    script: 'dotnet restore'
 
-    - name: Publish
-      run: dotnet publish --configuration Release --output D:\website-master_temp\
+- task: PowerShell@2
+  displayName: 'Build'
+  inputs:
+    targetType: 'inline'
+    script: 'dotnet build --configuration Release --no-restore'
 
-    - name: Deploy to IIS folder
-      run: |
-        Remove-Item -Recurse -Force D:\website-master\*
-        Copy-Item -Path D:\website-master_temp\* -Destination D:\website-master\ -Recurse
+- task: PowerShell@2
+  displayName: 'Publish'
+  inputs:
+    targetType: 'inline'
+    script: 'dotnet publish --configuration Release --output D:\website-master_temp\'
 
-    - name: Start AppPool
-      run: %SYSTEMROOT%\System32\inetsrv\appcmd start apppool /apppool.name:"website"
+- task: PowerShell@2
+  displayName: 'Deploy to IIS folder'
+  inputs:
+    targetType: 'inline'
+    script: |
+      Remove-Item -Recurse -Force D:\website-master\*
+      Copy-Item -Path D:\website-master_temp\* -Destination D:\website-master\ -Recurse
+
+- task: PowerShell@2
+  displayName: 'Start AppPool'
+  inputs:
+    targetType: 'inline'
+    script: '%SYSTEMROOT%\System32\inetsrv\appcmd start apppool /apppool.name:"website"'
