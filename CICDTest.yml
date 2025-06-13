@@ -1,0 +1,38 @@
+name: Build and Deploy .NET 8 App to Azure VM
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-deploy:
+    runs-on: self-hosted  # This runs on your Azure VM agent
+    steps:
+    - name: Stop AppPool
+        run: %SYSTEMROOT%\System32\inetsrv\appcmd stop apppool /apppool.name:"website"
+    
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET 8
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Build
+      run: dotnet build --configuration Release --no-restore
+
+    - name: Publish
+      run: dotnet publish --configuration Release --output D:\website-master_temp\
+
+    - name: Deploy to IIS folder
+      run: |
+        Remove-Item -Recurse -Force D:\website-master\*  # Clean existing
+        Copy-Item -Path D:\website-master_temp\* -Destination D:\website-master\ -Recurse
+
+    - name: Stop AppPool
+        run: %SYSTEMROOT%\System32\inetsrv\appcmd start apppool /apppool.name:"website"
